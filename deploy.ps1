@@ -5,14 +5,14 @@
 param(
     [string]$AppName = "whpadel",
     [string]$ResourceGroup = "",
-    [string]$Location = "uksouth",
+    [string]$Location = "francesouth",
     [Parameter(Mandatory=$true)]
     [string]$PostgresPassword
 )
 
 $ErrorActionPreference = "Stop"
 
-if (-not $ResourceGroup) { $ResourceGroup = "$AppName-rg" }
+if (-not $ResourceGroup) { $ResourceGroup = "whpadel" }
 
 Write-Host ""
 Write-Host "  Deploying West Hants Padel to Azure" -ForegroundColor Cyan

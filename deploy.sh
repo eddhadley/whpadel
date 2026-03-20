@@ -6,8 +6,8 @@ set -euo pipefail
 
 # ─── Configuration ──────────────────────────────────────────────
 APP_NAME="${APP_NAME:-whpadel}"
-RESOURCE_GROUP="${RESOURCE_GROUP:-${APP_NAME}-rg}"
-LOCATION="${LOCATION:-uksouth}"
+RESOURCE_GROUP="${RESOURCE_GROUP:-whpadel}"
+LOCATION="${LOCATION:-francesouth}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD environment variable}"
 
 echo "╔══════════════════════════════════════════════════╗"
