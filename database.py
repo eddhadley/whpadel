@@ -36,8 +36,21 @@ SKILL_LEVELS = [
 
 COURTS = ["Court 1", "Court 2", "Court 3"]
 
-# Valid time slots (07:00 to 21:00, 1-hour slots)
-TIME_SLOTS = [f"{h:02d}:00" for h in range(7, 21)]
+# Valid time slots – hours depend on day of week
+# Mon-Fri: 09:00-20:00 (last game ends 21:00)
+# Sat-Sun: 09:00-17:00 (last game ends 18:00)
+TIME_SLOTS_WEEKDAY = [f"{h:02d}:00" for h in range(9, 21)]
+TIME_SLOTS_WEEKEND = [f"{h:02d}:00" for h in range(9, 18)]
+# All possible slots (superset) for backwards-compat
+TIME_SLOTS = TIME_SLOTS_WEEKDAY
+
+def get_time_slots_for_date(date_str):
+    """Return the valid time slots for a given date string (YYYY-MM-DD)."""
+    from datetime import datetime
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    if d.weekday() >= 5:  # Saturday=5, Sunday=6
+        return TIME_SLOTS_WEEKEND
+    return TIME_SLOTS_WEEKDAY
 
 
 def get_db():
@@ -111,6 +124,7 @@ def init_db():
                 min_level INTEGER NOT NULL CHECK(min_level BETWEEN 1 AND 7),
                 max_level INTEGER NOT NULL CHECK(max_level BETWEEN 1 AND 7),
                 max_players INTEGER NOT NULL DEFAULT 4,
+                reserved_slots INTEGER NOT NULL DEFAULT 0 CHECK(reserved_slots BETWEEN 0 AND 3),
                 notes TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -155,6 +169,7 @@ def init_db():
                 min_level INTEGER NOT NULL CHECK(min_level BETWEEN 1 AND 7),
                 max_level INTEGER NOT NULL CHECK(max_level BETWEEN 1 AND 7),
                 max_players INTEGER NOT NULL DEFAULT 4,
+                reserved_slots INTEGER NOT NULL DEFAULT 0 CHECK(reserved_slots BETWEEN 0 AND 3),
                 notes TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (creator_id) REFERENCES users(id)
@@ -180,6 +195,18 @@ def init_db():
 
 
 # ─── Auth helpers ───────────────────────────────────────────────
+
+def validate_password(password):
+    """Validate password complexity: 8+ chars, letters, numbers, special characters."""
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if not any(c.isalpha() for c in password):
+        raise ValueError("Password must contain at least one letter")
+    if not any(c.isdigit() for c in password):
+        raise ValueError("Password must contain at least one number")
+    if not any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?/~`' for c in password):
+        raise ValueError("Password must contain at least one special character")
+
 
 def hash_password(password, salt=None):
     """Hash a password with a random salt using SHA-256."""
@@ -265,8 +292,7 @@ def register_user(username, email, password, skill_level, first_name, last_name)
         raise ValueError("Username, email and password are required")
     if not (1 <= skill_level <= 7):
         raise ValueError("Invalid skill level")
-    if len(password) < 6:
-        raise ValueError("Password must be at least 6 characters")
+    validate_password(password)
 
     password_hash, salt = hash_password(password)
     verification_code = generate_verification_code()
@@ -335,7 +361,7 @@ def authenticate_user(username, password):
 
 def request_password_reset(identifier):
     """Look up a user by username or email and generate a reset code.
-    Returns (user_dict, reset_code) or raises ValueError."""
+    Returns (user_dict, reset_code) or None if not found."""
     from datetime import datetime, timedelta
     conn = get_db()
     try:
@@ -346,7 +372,7 @@ def request_password_reset(identifier):
         )
         row = cursor.fetchone()
         if not row:
-            raise ValueError("No account found with that username or email")
+            return None
         row = dict(row)
 
         code = generate_verification_code()
@@ -365,8 +391,7 @@ def request_password_reset(identifier):
 def reset_password(identifier, code, new_password):
     """Reset a user's password using a reset code. Returns updated user dict."""
     from datetime import datetime
-    if len(new_password) < 6:
-        raise ValueError("Password must be at least 6 characters")
+    validate_password(new_password)
 
     conn = get_db()
     try:
@@ -418,18 +443,22 @@ def get_user_by_id(user_id, conn=None):
 
 # ─── Game helpers ───────────────────────────────────────────────
 
-def create_game(creator_id, court, game_date, start_time, min_level, max_level, max_players=4, notes=""):
+def create_game(creator_id, court, game_date, start_time, min_level, max_level, max_players=4, reserved_slots=0, notes=""):
     """Create a new game. Creator auto-joins. Returns game dict."""
     if court not in COURTS:
         raise ValueError(f"Invalid court. Must be one of: {', '.join(COURTS)}")
-    if start_time not in TIME_SLOTS:
-        raise ValueError(f"Invalid time slot. Games run hourly from 07:00 to 20:00")
+    valid_slots = get_time_slots_for_date(game_date)
+    if start_time not in valid_slots:
+        if valid_slots is TIME_SLOTS_WEEKEND:
+            raise ValueError("Invalid time slot. Weekend games run from 09:00 to 17:00")
+        else:
+            raise ValueError("Invalid time slot. Weekday games run from 09:00 to 20:00")
     if not (1 <= min_level <= 7) or not (1 <= max_level <= 7):
         raise ValueError("Invalid skill level range")
     if min_level > max_level:
         raise ValueError("Minimum level cannot be higher than maximum level")
-    if not (2 <= max_players <= 4):
-        raise ValueError("Max players must be between 2 and 4")
+    if not (0 <= reserved_slots <= 3):
+        raise ValueError("Reserved slots must be between 0 and 3")
 
     # Prevent booking in the past
     from datetime import datetime
@@ -451,23 +480,27 @@ def create_game(creator_id, court, game_date, start_time, min_level, max_level, 
     if not creator:
         raise ValueError("User not found")
 
+    # Check max active games limit
+    if count_user_future_games(creator_id) >= MAX_ACTIVE_GAMES:
+        raise ValueError(f"You can only be in {MAX_ACTIVE_GAMES} upcoming games at a time")
+
     conn = get_db()
     try:
         cursor = db_cursor(conn)
         if USE_POSTGRES:
             cursor.execute(
                 """INSERT INTO games (creator_id, court, game_date, start_time, 
-                   min_level, max_level, max_players, notes)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                (creator_id, court, game_date, start_time, min_level, max_level, max_players, notes)
+                   min_level, max_level, max_players, reserved_slots, notes)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (creator_id, court, game_date, start_time, min_level, max_level, max_players, reserved_slots, notes)
             )
             game_id = cursor.fetchone()["id"]
         else:
             cursor.execute(
                 """INSERT INTO games (creator_id, court, game_date, start_time, 
-                   min_level, max_level, max_players, notes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (creator_id, court, game_date, start_time, min_level, max_level, max_players, notes)
+                   min_level, max_level, max_players, reserved_slots, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (creator_id, court, game_date, start_time, min_level, max_level, max_players, reserved_slots, notes)
             )
             game_id = cursor.lastrowid
         # Auto-join the creator
@@ -637,9 +670,14 @@ def join_game(game_id, user_id):
             if player["id"] == user_id:
                 raise ValueError("You have already joined this game")
 
-        # Check if game is full
-        if len(game["players"]) >= game["max_players"]:
+        # Check if game is full (actual players + reserved slots >= max_players)
+        reserved = game.get("reserved_slots", 0)
+        if len(game["players"]) + reserved >= game["max_players"]:
             raise ValueError("This game is full")
+
+        # Check max active games limit
+        if count_user_future_games(user_id, conn) >= MAX_ACTIVE_GAMES:
+            raise ValueError(f"You can only be in {MAX_ACTIVE_GAMES} upcoming games at a time")
 
         # Check skill level
         if user["skill_level"] < game["min_level"] or user["skill_level"] > game["max_level"]:
@@ -693,13 +731,55 @@ def leave_game(game_id, user_id):
         conn.close()
 
 
-def update_user_skill_level(user_id, skill_level):
-    """Update a user's skill level. Returns updated user dict."""
+def get_incompatible_games(user_id, new_level, conn=None):
+    """Find future games the user is in where new_level is outside min/max range."""
+    own_conn = conn is None
+    if own_conn:
+        conn = get_db()
+    try:
+        cursor = db_cursor(conn)
+        query = f"""
+            SELECT g.id, g.court, g.game_date, g.start_time, g.min_level, g.max_level
+            FROM games g
+            JOIN game_players gp ON gp.game_id = g.id
+            WHERE gp.user_id = %s
+              AND {_future_games_filter()}
+              AND (%s < g.min_level OR %s > g.max_level)
+            ORDER BY g.game_date ASC, g.start_time ASC
+        """
+        cursor.execute(_q(query), (user_id, new_level, new_level))
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def update_user_skill_level(user_id, skill_level, force=False):
+    """Update a user's skill level. If force=False and there are incompatible
+    games, returns {'affected_games': [...]} instead of updating.
+    If force=True, updates level and removes user from incompatible games."""
     if not (1 <= skill_level <= 7):
         raise ValueError("Invalid skill level")
     conn = get_db()
     try:
+        affected = get_incompatible_games(user_id, skill_level, conn)
+        if affected and not force:
+            level_names = {l["value"]: l["name"] for l in SKILL_LEVELS}
+            for g in affected:
+                g["min_level_name"] = level_names.get(g["min_level"], "?")
+                g["max_level_name"] = level_names.get(g["max_level"], "?")
+            return {"affected_games": affected}
+
         cursor = db_cursor(conn)
+        # Remove from incompatible future games
+        if affected:
+            game_ids = [g["id"] for g in affected]
+            placeholders = ",".join(["%s"] * len(game_ids))
+            cursor.execute(
+                _q(f"DELETE FROM game_players WHERE user_id = %s AND game_id IN ({placeholders})"),
+                [user_id] + game_ids
+            )
+
         cursor.execute(
             _q("UPDATE users SET skill_level = %s WHERE id = %s"),
             (skill_level, user_id)
@@ -707,9 +787,81 @@ def update_user_skill_level(user_id, skill_level):
         if cursor.rowcount == 0:
             raise ValueError("User not found")
         conn.commit()
+        return {"user": get_user_by_id(user_id, conn), "removed_from": len(affected)}
+    finally:
+        conn.close()
+
+
+def change_password(user_id, current_password, new_password):
+    """Change a user's password after verifying the current one."""
+    validate_password(new_password)
+    conn = get_db()
+    try:
+        cursor = db_cursor(conn)
+        cursor.execute(
+            _q("SELECT password_hash, password_salt FROM users WHERE id = %s"),
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError("User not found")
+        row = dict(row)
+        hashed, _ = hash_password(current_password, row["password_salt"])
+        if hashed != row["password_hash"]:
+            raise ValueError("Current password is incorrect")
+        new_hash, new_salt = hash_password(new_password)
+        cursor.execute(
+            _q("UPDATE users SET password_hash = %s, password_salt = %s WHERE id = %s"),
+            (new_hash, new_salt, user_id)
+        )
+        conn.commit()
         return get_user_by_id(user_id, conn)
     finally:
         conn.close()
+
+
+def update_user_name(user_id, first_name, last_name):
+    """Update a user's first and last name."""
+    if not first_name or not first_name.strip():
+        raise ValueError("First name is required")
+    if not last_name or not last_name.strip():
+        raise ValueError("Last name is required")
+    conn = get_db()
+    try:
+        cursor = db_cursor(conn)
+        cursor.execute(
+            _q("UPDATE users SET first_name = %s, last_name = %s WHERE id = %s"),
+            (first_name.strip(), last_name.strip(), user_id)
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("User not found")
+        conn.commit()
+        return get_user_by_id(user_id, conn)
+    finally:
+        conn.close()
+
+
+MAX_ACTIVE_GAMES = 6
+
+
+def count_user_future_games(user_id, conn=None):
+    """Count how many future games a user is currently in."""
+    own_conn = conn is None
+    if own_conn:
+        conn = get_db()
+    try:
+        cursor = db_cursor(conn)
+        query = f"""
+            SELECT COUNT(*) as cnt FROM game_players gp
+            JOIN games g ON gp.game_id = g.id
+            WHERE gp.user_id = %s AND {_future_games_filter()}
+        """
+        cursor.execute(_q(query), (user_id,))
+        row = cursor.fetchone()
+        return dict(row)["cnt"] if row else 0
+    finally:
+        if own_conn:
+            conn.close()
 
 
 def get_court_availability(date):
@@ -720,7 +872,7 @@ def get_court_availability(date):
 
     cursor.execute(
         _q("""SELECT g.id, g.court, g.start_time, g.min_level, g.max_level, g.max_players,
-                      g.creator_id, u.username as creator_name, u.skill_level as creator_skill,
+                      g.reserved_slots, g.creator_id, u.username as creator_name, u.skill_level as creator_skill,
                       (SELECT COUNT(*) FROM game_players WHERE game_id = g.id) as player_count
                FROM games g
                JOIN users u ON g.creator_id = u.id
@@ -741,10 +893,11 @@ def get_court_availability(date):
     is_today = (date == today_str)
     current_hour = now.hour
 
+    slots_for_date = get_time_slots_for_date(date)
     availability = {}
     for court in COURTS:
         availability[court] = {}
-        for slot in TIME_SLOTS:
+        for slot in slots_for_date:
             key = f"{court}_{slot}"
             slot_hour = int(slot.split(":")[0])
             if key in booked:
@@ -758,6 +911,7 @@ def get_court_availability(date):
                         "min_level": game["min_level"],
                         "max_level": game["max_level"],
                         "max_players": game["max_players"],
+                        "reserved_slots": game.get("reserved_slots", 0),
                         "player_count": game["player_count"],
                     }
                 }

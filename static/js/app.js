@@ -20,7 +20,7 @@ const state = {
         start_time: null,
         min_level: 1,
         max_level: 7,
-        max_players: 4,
+        reserved_slots: 0,
         notes: ''
     },
     courtDate: todayISO(),
@@ -66,8 +66,18 @@ const SKILL_LEVELS = [
 ];
 
 const COURTS = ["Court 1", "Court 2", "Court 3"];
-const TIME_SLOTS = [];
-for (let h = 7; h < 21; h++) TIME_SLOTS.push(`${String(h).padStart(2,'0')}:00`);
+const TIME_SLOTS_WEEKDAY = [];
+for (let h = 9; h < 21; h++) TIME_SLOTS_WEEKDAY.push(`${String(h).padStart(2,'0')}:00`);
+const TIME_SLOTS_WEEKEND = [];
+for (let h = 9; h < 18; h++) TIME_SLOTS_WEEKEND.push(`${String(h).padStart(2,'0')}:00`);
+const TIME_SLOTS = TIME_SLOTS_WEEKDAY; // default
+
+function getTimeSlotsForDate(dateStr) {
+    if (!dateStr) return TIME_SLOTS_WEEKDAY;
+    const d = new Date(dateStr + 'T12:00:00');
+    const day = d.getDay(); // 0=Sun, 6=Sat
+    return (day === 0 || day === 6) ? TIME_SLOTS_WEEKEND : TIME_SLOTS_WEEKDAY;
+}
 
 // ═══════════════════════════════════════════════════
 // Utility Functions
@@ -223,6 +233,32 @@ async function resetPassword(identifier, code, newPassword) {
     return data;
 }
 
+async function changePassword(currentPassword, newPassword) {
+    const data = await api('/me/password', {
+        method: 'POST',
+        body: { current_password: currentPassword, new_password: newPassword }
+    });
+    state.user = data.user;
+    return data.user;
+}
+
+async function updateName(firstName, lastName) {
+    const data = await api('/me/name', {
+        method: 'POST',
+        body: { first_name: firstName, last_name: lastName }
+    });
+    state.user = data.user;
+    return data.user;
+}
+
+function validatePassword(password) {
+    if (password.length < 8) return 'Password must be at least 8 characters';
+    if (!/[a-zA-Z]/.test(password)) return 'Password must contain at least one letter';
+    if (!/[0-9]/.test(password)) return 'Password must contain at least one number';
+    if (!/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~`]/.test(password)) return 'Password must contain at least one special character';
+    return null;
+}
+
 async function logout() {
     await api('/logout', { method: 'POST' });
     state.user = null;
@@ -271,13 +307,16 @@ async function fetchCourtAvailability(date) {
     return data;
 }
 
-async function updateSkillLevel(skillLevel) {
+async function updateSkillLevel(skillLevel, force = false) {
     const data = await api('/me/skill-level', {
         method: 'POST',
-        body: { skill_level: skillLevel }
+        body: { skill_level: skillLevel, force }
     });
+    if (data.affected_games) {
+        return { affected_games: data.affected_games };
+    }
     state.user = data.user;
-    return data.user;
+    return { user: data.user, removed_from: data.removed_from || 0 };
 }
 
 // ═══════════════════════════════════════════════════
@@ -384,7 +423,10 @@ function renderRegisterForm() {
             </div>
             <div class="form-group">
                 <label>Password</label>
-                <input type="password" class="form-input" name="password" placeholder="Min 6 characters" required minlength="6" autocomplete="new-password">
+                <input type="password" class="form-input" name="password" placeholder="Min 8 characters, letters + numbers + special" required minlength="8" autocomplete="new-password">
+                <div class="password-requirements" style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px">
+                    Must be 8+ characters with letters, numbers and special characters
+                </div>
             </div>
             <div class="form-group">
                 <label>Skill Level <span style="font-weight:400;text-transform:none;letter-spacing:0">(West Hants Colour Grading)</span></label>
@@ -560,7 +602,8 @@ function renderMyGamesPage() {
 function renderGameCard(game) {
     const playerCount = game.players ? game.players.length : game.player_count || 0;
     const maxPlayers = game.max_players || 4;
-    const isFull = playerCount >= maxPlayers;
+    const reserved = game.reserved_slots || 0;
+    const isFull = playerCount + reserved >= maxPlayers;
     const isJoined = game.players && state.user && game.players.some(p => p.id === state.user.id);
     const minLevel = getSkillLevel(game.min_level);
     const maxLevel = getSkillLevel(game.max_level);
@@ -572,8 +615,12 @@ function renderGameCard(game) {
             avatars.push(`<div class="player-avatar" style="background:${pl.color}" title="${p.username} (${pl.name})">${getInitials(p)}</div>`);
         });
     }
-    // Empty slots
-    for (let i = playerCount; i < maxPlayers; i++) {
+    // Reserved slots
+    for (let i = 0; i < reserved; i++) {
+        avatars.push(`<div class="player-avatar reserved-slot" title="Reserved by host">R</div>`);
+    }
+    // Open slots
+    for (let i = playerCount + reserved; i < maxPlayers; i++) {
         avatars.push(`<div class="player-avatar empty-slot">+</div>`);
     }
 
@@ -609,7 +656,7 @@ function renderGameCard(game) {
                 </div>
             </div>
             <div class="game-card-footer">
-                <span class="player-count">${playerCount}/${maxPlayers} players</span>
+                <span class="player-count">${playerCount + reserved}/${maxPlayers} players${reserved ? ` (${reserved} reserved)` : ''}</span>
                 ${actionBtn}
             </div>
         </div>
@@ -623,7 +670,8 @@ function renderGameModal(game) {
     const maxLevel = getSkillLevel(game.max_level);
     const isCreator = state.user && game.creator_id === state.user.id;
     const isJoined = game.players && state.user && game.players.some(p => p.id === state.user.id);
-    const isFull = game.players && game.players.length >= game.max_players;
+    const reserved = game.reserved_slots || 0;
+    const isFull = game.players && game.players.length + reserved >= game.max_players;
 
     // Check if user's level is in range
     const userLevel = state.user ? state.user.skill_level : 0;
@@ -695,7 +743,7 @@ function renderGameModal(game) {
                     ` : ''}
 
                     <h3 style="margin-top:20px;margin-bottom:10px;font-size:1rem;font-weight:700;">
-                        Players (${game.players.length}/${game.max_players})
+                        Players (${game.players.length + reserved}/${game.max_players})${reserved ? ` · ${reserved} reserved` : ''}
                     </h3>
                     <ul class="player-list">
                         ${game.players.map(p => {
@@ -713,7 +761,16 @@ function renderGameModal(game) {
                                 </li>
                             `;
                         }).join('')}
-                        ${Array.from({length: game.max_players - game.players.length}, (_, i) => `
+                        ${Array.from({length: reserved}, (_, i) => `
+                            <li class="player-list-item">
+                                <div class="player-list-avatar reserved-slot" style="background:#9b59b6;color:white">R</div>
+                                <div class="player-list-info">
+                                    <div class="name">${escapeHtml(game.creator_name || 'Host')}'s guest <span class="reserved-tag">RESERVED</span></div>
+                                    <div class="level">Pre-arranged player</div>
+                                </div>
+                            </li>
+                        `).join('')}
+                        ${Array.from({length: game.max_players - game.players.length - reserved}, (_, i) => `
                             <li class="player-list-item" style="opacity:0.4">
                                 <div class="player-list-avatar" style="background:var(--border);color:var(--text-light)">?</div>
                                 <div class="player-list-info">
@@ -774,7 +831,7 @@ function renderCreatePage() {
                 <div class="form-group">
                     <label>Time Slot</label>
                     <div class="time-grid" id="time-grid">
-                        ${TIME_SLOTS.map(t => `
+                        ${getTimeSlotsForDate(f.game_date).map(t => `
                             <div class="time-slot ${f.start_time === t ? 'selected' : ''}" data-time="${t}">
                                 ${t}
                             </div>
@@ -801,11 +858,12 @@ function renderCreatePage() {
                 </div>
 
                 <div class="form-group">
-                    <label>Max Players</label>
-                    <select class="form-input" name="max_players">
-                        <option value="2" ${f.max_players===2?'selected':''}>2 Players (Singles)</option>
-                        <option value="3" ${f.max_players===3?'selected':''}>3 Players</option>
-                        <option value="4" ${f.max_players===4?'selected':''}>4 Players (Doubles)</option>
+                    <label>Looking For Players</label>
+                    <p class="form-hint">How many players do you need from the app? You + reserved guests fill the rest.</p>
+                    <select class="form-input" name="reserved_slots">
+                        <option value="0" ${f.reserved_slots===0?'selected':''}>Need 3 players (just me so far)</option>
+                        <option value="1" ${f.reserved_slots===1?'selected':''}>Need 2 players (I have 1 guest)</option>
+                        <option value="2" ${f.reserved_slots===2?'selected':''}>Need 1 player (I have 2 guests)</option>
                     </select>
                 </div>
 
@@ -847,6 +905,7 @@ function renderCourtsPage() {
 function renderCourtGrid() {
     if (!state.courtAvailability) return '';
     const avail = state.courtAvailability.availability;
+    const slots = getTimeSlotsForDate(state.courtDate);
 
     let html = `<div class="court-grid">`;
     // Header row
@@ -855,7 +914,7 @@ function renderCourtGrid() {
         html += `<div class="court-grid-header">${c}</div>`;
     });
 
-    TIME_SLOTS.forEach(slot => {
+    slots.forEach(slot => {
         html += `<div class="court-grid-time">${slot}</div>`;
         COURTS.forEach(court => {
             const slotData = avail[court] && avail[court][slot];
@@ -866,7 +925,7 @@ function renderCourtGrid() {
                 const level = getSkillLevel(game.min_level);
                 html += `<div class="court-slot booked" data-game-id="${game.id}" style="border-left:3px solid ${level.color}" title="${escapeHtml(game.creator_name)}'s game">
                     <span class="slot-level" style="color:${level.color}">${level.name}</span>
-                    <span class="slot-players">${game.player_count}/${game.max_players}</span>
+                    <span class="slot-players">${game.player_count + (game.reserved_slots || 0)}/${game.max_players}</span>
                 </div>`;
             } else if (slotData && !slotData.available) {
                 html += `<div class="court-slot booked" title="Booked">●</div>`;
@@ -895,6 +954,43 @@ function renderProfilePage() {
                         ${level.name} – ${level.label}
                     </div>
                 </div>
+            </div>
+
+            <div class="card mt-16">
+                <h3 style="font-size:1rem;font-weight:700;margin-bottom:12px;">Edit Name</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>First Name</label>
+                        <input type="text" class="form-input" id="edit-first-name" value="${escapeHtml(state.user.first_name || '')}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Last Name</label>
+                        <input type="text" class="form-input" id="edit-last-name" value="${escapeHtml(state.user.last_name || '')}" required>
+                    </div>
+                </div>
+                <button class="btn btn-primary btn-block mt-8" id="btn-save-name" disabled>Save Name</button>
+                <div id="name-save-status" style="text-align:center;margin-top:8px;font-size:0.8rem;display:none"></div>
+            </div>
+
+            <div class="card mt-16">
+                <h3 style="font-size:1rem;font-weight:700;margin-bottom:12px;">Change Password</h3>
+                <div class="form-group">
+                    <label>Current Password</label>
+                    <input type="password" class="form-input" id="current-password" autocomplete="current-password">
+                </div>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" class="form-input" id="new-password" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label>Confirm New Password</label>
+                    <input type="password" class="form-input" id="confirm-password" autocomplete="new-password">
+                </div>
+                <div class="password-requirements" style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:8px">
+                    Must be 8+ characters with letters, numbers and special characters
+                </div>
+                <button class="btn btn-primary btn-block" id="btn-change-password" disabled>Change Password</button>
+                <div id="password-save-status" style="text-align:center;margin-top:8px;font-size:0.8rem;display:none"></div>
             </div>
 
             <div class="card mt-16">
@@ -997,7 +1093,7 @@ async function navigateTo(page, options = {}) {
             state.createForm.game_date = todayISO();
             state.createForm.min_level = 1;
             state.createForm.max_level = 7;
-            state.createForm.max_players = 4;
+            state.createForm.reserved_slots = 0;
             state.createForm.notes = '';
             // Apply any pre-filled values (e.g. from courts page)
             if (options.prefill) {
@@ -1073,6 +1169,13 @@ function bindAuthEvents() {
 
             if (!skillLevel) {
                 errorEl.textContent = 'Please select your skill level';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            const pwError = validatePassword(form.get('password'));
+            if (pwError) {
+                errorEl.textContent = pwError;
                 errorEl.style.display = 'block';
                 return;
             }
@@ -1162,7 +1265,7 @@ function renderResetPasswordForm(identifier) {
                 </div>
                 <div class="form-group">
                     <label>New Password</label>
-                    <input type="password" class="form-input" name="new_password" placeholder="Min 6 characters" required minlength="6" autocomplete="new-password">
+                    <input type="password" class="form-input" name="new_password" placeholder="Min 8 characters, letters + numbers + special" required minlength="8" autocomplete="new-password">
                 </div>
                 <div id="reset-error" class="form-error mb-8" style="display:none"></div>
                 <button type="submit" class="btn btn-primary btn-block mt-8">Reset Password</button>
@@ -1186,7 +1289,7 @@ function bindForgotPasswordEvents() {
             submitBtn.textContent = 'Sending...';
             try {
                 await forgotPassword(identifier);
-                showToast('Reset code sent to your email! 📧', 'success');
+                showToast('If an account exists, a reset code has been sent 📧', 'success');
                 const content = $('#auth-content');
                 content.innerHTML = renderResetPasswordForm(identifier);
                 bindResetPasswordEvents();
@@ -1220,6 +1323,14 @@ function bindResetPasswordEvents() {
             const fd = new FormData(form);
             const errorEl = $('#reset-error');
             const submitBtn = form.querySelector('button[type="submit"]');
+
+            const pwError = validatePassword(fd.get('new_password'));
+            if (pwError) {
+                errorEl.textContent = pwError;
+                errorEl.style.display = 'block';
+                return;
+            }
+
             submitBtn.disabled = true;
             submitBtn.textContent = 'Resetting...';
             try {
@@ -1392,6 +1503,66 @@ async function openGameModal(gameId) {
 function closeModal() {
     const modal = $('#game-modal');
     if (modal) modal.remove();
+    const warning = $('#level-change-modal');
+    if (warning) warning.remove();
+}
+
+function showLevelChangeWarning(newLevel, affectedGames) {
+    const newLevelInfo = getSkillLevel(newLevel);
+    const gameList = affectedGames.map(g =>
+        `<li><strong>${g.court}</strong> — ${formatDate(g.game_date)} at ${g.start_time} (${g.min_level_name} – ${g.max_level_name})</li>`
+    ).join('');
+
+    const html = `
+        <div class="modal-overlay" id="level-change-modal">
+            <div class="modal-content">
+                <div class="modal-handle"></div>
+                <div class="modal-header">
+                    <h2>⚠️ Level Change Warning</h2>
+                </div>
+                <div class="modal-body">
+                    <p>Changing your colour grading to <strong style="color:${newLevelInfo.color}">${newLevelInfo.label}</strong> will remove you from the following game${affectedGames.length > 1 ? 's' : ''} because your new level is outside their required range:</p>
+                    <ul class="affected-games-list">${gameList}</ul>
+                    <p style="margin-top:12px"><strong>Do you want to continue?</strong></p>
+                </div>
+                <div class="modal-actions" style="display:flex;gap:8px;padding:16px">
+                    <button class="btn btn-secondary" id="level-change-cancel" style="flex:1">Cancel</button>
+                    <button class="btn btn-danger" id="level-change-confirm" style="flex:1">Change & Leave Games</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+
+    $('#level-change-cancel').addEventListener('click', closeModal);
+    $('#level-change-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'level-change-modal') closeModal();
+    });
+
+    $('#level-change-confirm').addEventListener('click', async () => {
+        const btn = $('#level-change-confirm');
+        btn.disabled = true;
+        btn.textContent = 'Updating...';
+        try {
+            const result = await updateSkillLevel(newLevel, true);
+            closeModal();
+            const removedMsg = result.removed_from > 0
+                ? ` You were removed from ${result.removed_from} game${result.removed_from > 1 ? 's' : ''}.`
+                : '';
+            showToast(`Colour grading updated! 🎨${removedMsg}`, 'success');
+            const content = $('#page-content');
+            content.innerHTML = renderProfilePage();
+            bindProfileEvents();
+            const level = getSkillLevel(state.user.skill_level);
+            const badge = $('.user-badge');
+            if (badge) {
+                badge.innerHTML = `<span class="level-dot" style="background:${level.color}"></span>${state.user.first_name || state.user.username}`;
+            }
+        } catch (err) {
+            showToast(err.message, 'error');
+            closeModal();
+        }
+    });
 }
 
 function bindModalEvents(game) {
@@ -1561,7 +1732,7 @@ function bindCreateEvents() {
                     start_time: state.createForm.start_time,
                     min_level: state.createForm.min_level,
                     max_level: state.createForm.max_level,
-                    max_players: parseInt(formData.get('max_players')),
+                    reserved_slots: parseInt(formData.get('reserved_slots')),
                     notes: formData.get('notes') || '',
                 });
                 showToast('Game created! 🎉', 'success');
@@ -1595,8 +1766,34 @@ function updateLevelRange() {
 }
 
 async function updateTimeSlotAvailability() {
+    const f = state.createForm;
+    const slots = getTimeSlotsForDate(f.game_date);
+
+    // Rebuild time grid for the selected date's valid slots
+    const grid = $('#time-grid');
+    if (grid) {
+        // Clear selection if it's no longer valid for this day
+        if (f.start_time && !slots.includes(f.start_time)) {
+            f.start_time = null;
+        }
+        grid.innerHTML = slots.map(t => `
+            <div class="time-slot ${f.start_time === t ? 'selected' : ''}" data-time="${t}">
+                ${t}
+            </div>
+        `).join('');
+        // Rebind click events
+        grid.querySelectorAll('.time-slot').forEach(slot => {
+            slot.addEventListener('click', () => {
+                if (slot.classList.contains('disabled')) return;
+                grid.querySelectorAll('.time-slot').forEach(s => s.classList.remove('selected'));
+                slot.classList.add('selected');
+                state.createForm.start_time = slot.dataset.time;
+            });
+        });
+    }
+
     // Disable past time slots when date is today
-    const isToday = state.createForm.game_date === todayISO();
+    const isToday = f.game_date === todayISO();
     const now = new Date();
     const currentHour = now.getHours();
 
@@ -1606,27 +1803,25 @@ async function updateTimeSlotAvailability() {
         if (isToday && slotHour <= currentHour) {
             slot.classList.add('disabled');
             slot.classList.remove('selected');
-            if (state.createForm.start_time === time) {
-                state.createForm.start_time = null;
+            if (f.start_time === time) {
+                f.start_time = null;
             }
-        } else {
-            slot.classList.remove('disabled');
         }
     });
 
-    if (!state.createForm.court || !state.createForm.game_date) return;
+    if (!f.court || !f.game_date) return;
 
     try {
-        const data = await fetchCourtAvailability(state.createForm.game_date);
-        const courtAvail = data.availability[state.createForm.court];
+        const data = await fetchCourtAvailability(f.game_date);
+        const courtAvail = data.availability[f.court];
 
         $$('.time-slot').forEach(slot => {
             const time = slot.dataset.time;
             if (courtAvail && courtAvail[time] && !courtAvail[time].available) {
                 slot.classList.add('disabled');
                 slot.classList.remove('selected');
-                if (state.createForm.start_time === time) {
-                    state.createForm.start_time = null;
+                if (f.start_time === time) {
+                    f.start_time = null;
                 }
             }
         });
@@ -1682,7 +1877,103 @@ async function loadCourtAvailability() {
 function bindProfileEvents() {
     let selectedLevel = state.user.skill_level;
 
-    // Skill level selector
+    // ── Edit Name ──
+    const firstNameInput = $('#edit-first-name');
+    const lastNameInput = $('#edit-last-name');
+    const saveNameBtn = $('#btn-save-name');
+    function checkNameChanged() {
+        if (!saveNameBtn) return;
+        const changed = firstNameInput.value.trim() !== (state.user.first_name || '') ||
+                        lastNameInput.value.trim() !== (state.user.last_name || '');
+        saveNameBtn.disabled = !changed || !firstNameInput.value.trim() || !lastNameInput.value.trim();
+    }
+    if (firstNameInput) firstNameInput.addEventListener('input', checkNameChanged);
+    if (lastNameInput) lastNameInput.addEventListener('input', checkNameChanged);
+    if (saveNameBtn) {
+        saveNameBtn.addEventListener('click', async () => {
+            saveNameBtn.disabled = true;
+            saveNameBtn.textContent = 'Saving...';
+            try {
+                await updateName(firstNameInput.value.trim(), lastNameInput.value.trim());
+                showToast('Name updated! ✅', 'success');
+                const content = $('#page-content');
+                content.innerHTML = renderProfilePage();
+                bindProfileEvents();
+                const level = getSkillLevel(state.user.skill_level);
+                const badge = $('.user-badge');
+                if (badge) {
+                    badge.innerHTML = `<span class="level-dot" style="background:${level.color}"></span>${state.user.first_name || state.user.username}`;
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+                saveNameBtn.disabled = false;
+                saveNameBtn.textContent = 'Save Name';
+            }
+        });
+    }
+
+    // ── Change Password ──
+    const currentPw = $('#current-password');
+    const newPw = $('#new-password');
+    const confirmPw = $('#confirm-password');
+    const changePwBtn = $('#btn-change-password');
+    const pwStatus = $('#password-save-status');
+    function checkPasswordReady() {
+        if (!changePwBtn) return;
+        changePwBtn.disabled = !currentPw.value || !newPw.value || !confirmPw.value;
+    }
+    if (currentPw) currentPw.addEventListener('input', checkPasswordReady);
+    if (newPw) newPw.addEventListener('input', checkPasswordReady);
+    if (confirmPw) confirmPw.addEventListener('input', checkPasswordReady);
+    if (changePwBtn) {
+        changePwBtn.addEventListener('click', async () => {
+            if (pwStatus) { pwStatus.style.display = 'none'; }
+            if (newPw.value !== confirmPw.value) {
+                if (pwStatus) {
+                    pwStatus.textContent = 'New passwords do not match';
+                    pwStatus.style.display = 'block';
+                    pwStatus.style.color = 'var(--danger)';
+                }
+                return;
+            }
+            const pwError = validatePassword(newPw.value);
+            if (pwError) {
+                if (pwStatus) {
+                    pwStatus.textContent = pwError;
+                    pwStatus.style.display = 'block';
+                    pwStatus.style.color = 'var(--danger)';
+                }
+                return;
+            }
+            changePwBtn.disabled = true;
+            changePwBtn.textContent = 'Changing...';
+            try {
+                await changePassword(currentPw.value, newPw.value);
+                showToast('Password changed! 🔒', 'success');
+                currentPw.value = '';
+                newPw.value = '';
+                confirmPw.value = '';
+                changePwBtn.disabled = true;
+                changePwBtn.textContent = 'Change Password';
+                if (pwStatus) {
+                    pwStatus.textContent = 'Password changed successfully';
+                    pwStatus.style.display = 'block';
+                    pwStatus.style.color = 'var(--success)';
+                }
+            } catch (err) {
+                if (pwStatus) {
+                    pwStatus.textContent = err.message;
+                    pwStatus.style.display = 'block';
+                    pwStatus.style.color = 'var(--danger)';
+                }
+                showToast(err.message, 'error');
+                changePwBtn.disabled = false;
+                changePwBtn.textContent = 'Change Password';
+            }
+        });
+    }
+
+    // ── Skill level selector ──
     $$('#profile-skill-selector .skill-option').forEach(option => {
         option.addEventListener('click', () => {
             $$('#profile-skill-selector .skill-option').forEach(o => o.classList.remove('selected'));
@@ -1703,13 +1994,20 @@ function bindProfileEvents() {
             saveBtn.textContent = 'Saving...';
             const statusEl = $('#level-save-status');
             try {
-                await updateSkillLevel(selectedLevel);
-                showToast('Colour grading updated! 🎨', 'success');
-                // Re-render profile to reflect changes (avatar, badge, etc.)
+                const result = await updateSkillLevel(selectedLevel);
+                if (result.affected_games) {
+                    showLevelChangeWarning(selectedLevel, result.affected_games);
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save Colour Grading';
+                    return;
+                }
+                const removedMsg = result.removed_from > 0
+                    ? ` You were removed from ${result.removed_from} incompatible game${result.removed_from > 1 ? 's' : ''}.`
+                    : '';
+                showToast(`Colour grading updated! 🎨${removedMsg}`, 'success');
                 const content = $('#page-content');
                 content.innerHTML = renderProfilePage();
                 bindProfileEvents();
-                // Also update the top bar badge
                 const level = getSkillLevel(state.user.skill_level);
                 const badge = $('.user-badge');
                 if (badge) {

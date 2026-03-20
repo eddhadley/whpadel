@@ -644,6 +644,25 @@ select.form-input {
     font-size: 1rem;
 }
 
+.reserved-slot {
+    background: #9b59b6;
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+
+.reserved-tag {
+    display: inline-block;
+    background: #9b59b6;
+    color: white;
+    font-size: 0.65rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-left: 4px;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
 .game-card-footer {
     padding: 10px 16px;
     background: var(--bg);
@@ -723,6 +742,17 @@ select.form-input {
 
 .modal-body {
     padding: 20px;
+}
+
+.affected-games-list {
+    margin: 12px 0;
+    padding-left: 20px;
+}
+
+.affected-games-list li {
+    margin: 6px 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
 }
 
 .modal-close {

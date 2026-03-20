@@ -118,6 +118,10 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
             return self.api_me()
         if path == "/api/me/skill-level" and method == "POST":
             return self.api_update_skill_level()
+        if path == "/api/me/password" and method == "POST":
+            return self.api_change_password()
+        if path == "/api/me/name" and method == "POST":
+            return self.api_update_name()
         if path == "/api/me/games" and method == "GET":
             return self.api_my_games()
 
@@ -154,9 +158,14 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/courts" and method == "GET":
             return send_json(self, db.COURTS)
 
-        # Time slots reference
+        # Time slots reference (accepts optional ?date=YYYY-MM-DD for day-specific slots)
         if path == "/api/time-slots" and method == "GET":
-            return send_json(self, db.TIME_SLOTS)
+            qs = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(qs)
+            date_str = params.get("date", [None])[0]
+            if date_str:
+                return send_json(self, db.get_time_slots_for_date(date_str))
+            return send_json(self, db.TIME_SLOTS_WEEKDAY)
 
         # Health check for Azure App Service
         if path == "/api/health" and method == "GET":
@@ -259,11 +268,13 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
         if not identifier:
             return send_error(self, "Please enter your username or email")
         try:
-            user_info, code = db.request_password_reset(identifier)
-            email_service.send_password_reset_email(
-                user_info["email"], user_info.get("first_name", ""), code
-            )
-            send_json(self, {"message": "Password reset code sent to your email"})
+            result = db.request_password_reset(identifier)
+            if result:
+                user_info, code = result
+                email_service.send_password_reset_email(
+                    user_info["email"], user_info.get("first_name", ""), code
+                )
+            send_json(self, {"message": "If an account exists with that username or email, a reset code has been sent"})
         except ValueError as e:
             send_error(self, str(e))
 
@@ -294,8 +305,42 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
         data = read_body(self)
         try:
             skill_level = int(data.get("skill_level", 0))
-            updated_user = db.update_user_skill_level(user["id"], skill_level)
-            send_json(self, {"user": updated_user})
+            force = bool(data.get("force", False))
+            result = db.update_user_skill_level(user["id"], skill_level, force=force)
+            if "affected_games" in result:
+                send_json(self, result)
+            else:
+                send_json(self, {"user": result["user"], "removed_from": result["removed_from"]})
+        except (ValueError, TypeError) as e:
+            send_error(self, str(e))
+
+    def api_change_password(self):
+        user = get_session_user(self)
+        if not user:
+            return send_error(self, "Not authenticated", 401)
+        data = read_body(self)
+        try:
+            updated = db.change_password(
+                user["id"],
+                data.get("current_password", ""),
+                data.get("new_password", ""),
+            )
+            send_json(self, {"user": updated})
+        except (ValueError, TypeError) as e:
+            send_error(self, str(e))
+
+    def api_update_name(self):
+        user = get_session_user(self)
+        if not user:
+            return send_error(self, "Not authenticated", 401)
+        data = read_body(self)
+        try:
+            updated = db.update_user_name(
+                user["id"],
+                data.get("first_name", ""),
+                data.get("last_name", ""),
+            )
+            send_json(self, {"user": updated})
         except (ValueError, TypeError) as e:
             send_error(self, str(e))
 
@@ -334,6 +379,7 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
                 min_level=int(data.get("min_level", 1)),
                 max_level=int(data.get("max_level", 7)),
                 max_players=int(data.get("max_players", 4)),
+                reserved_slots=int(data.get("reserved_slots", 0)),
                 notes=data.get("notes", ""),
             )
             send_json(self, {"game": game}, 201)
