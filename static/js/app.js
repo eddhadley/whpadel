@@ -861,15 +861,17 @@ function renderCourtGrid() {
             const slotData = avail[court] && avail[court][slot];
             if (slotData && slotData.past) {
                 html += `<div class="court-slot past" title="Past">—</div>`;
-            } else if (slotData && !slotData.available) {
+            } else if (slotData && !slotData.available && slotData.game) {
                 const game = slotData.game;
                 const level = getSkillLevel(game.min_level);
-                html += `<div class="court-slot booked" style="border-left:3px solid ${level.color}" title="${escapeHtml(game.creator_name)}'s game">
+                html += `<div class="court-slot booked" data-game-id="${game.id}" style="border-left:3px solid ${level.color}" title="${escapeHtml(game.creator_name)}'s game">
                     <span class="slot-level" style="color:${level.color}">${level.name}</span>
                     <span class="slot-players">${game.player_count}/${game.max_players}</span>
                 </div>`;
+            } else if (slotData && !slotData.available) {
+                html += `<div class="court-slot booked" title="Booked">●</div>`;
             } else {
-                html += `<div class="court-slot available" title="Available">✓</div>`;
+                html += `<div class="court-slot available" data-court="${court}" data-time="${slot}" title="Available">✓</div>`;
             }
         });
     });

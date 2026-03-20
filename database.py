@@ -719,7 +719,12 @@ def get_court_availability(date):
     cursor = db_cursor(conn)
 
     cursor.execute(
-        _q("SELECT court, start_time, id FROM games WHERE game_date = %s"), (date,)
+        _q("""SELECT g.id, g.court, g.start_time, g.min_level, g.max_level, g.max_players,
+                      g.creator_id, u.username as creator_name, u.skill_level as creator_skill,
+                      (SELECT COUNT(*) FROM game_players WHERE game_id = g.id) as player_count
+               FROM games g
+               JOIN users u ON g.creator_id = u.id
+               WHERE g.game_date = %s"""), (date,)
     )
     bookings = cursor.fetchall()
     conn.close()
@@ -728,7 +733,7 @@ def get_court_availability(date):
     for b in bookings:
         b = dict(b)
         key = f"{b['court']}_{b['start_time']}"
-        booked[key] = b["id"]
+        booked[key] = b
 
     # Determine which slots are in the past for today
     now = datetime.now()
@@ -743,7 +748,19 @@ def get_court_availability(date):
             key = f"{court}_{slot}"
             slot_hour = int(slot.split(":")[0])
             if key in booked:
-                availability[court][slot] = {"available": False, "game_id": booked[key]}
+                game = booked[key]
+                availability[court][slot] = {
+                    "available": False,
+                    "game_id": game["id"],
+                    "game": {
+                        "id": game["id"],
+                        "creator_name": game["creator_name"],
+                        "min_level": game["min_level"],
+                        "max_level": game["max_level"],
+                        "max_players": game["max_players"],
+                        "player_count": game["player_count"],
+                    }
+                }
             elif is_today and slot_hour <= current_hour:
                 availability[court][slot] = {"available": False, "game_id": None, "past": True}
             else:
