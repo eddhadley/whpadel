@@ -71,8 +71,8 @@ def _q(sql):
 def _future_games_filter():
     """SQL fragment to filter only future games."""
     if USE_POSTGRES:
-        return ("(g.game_date > CURRENT_DATE OR "
-                "(g.game_date = CURRENT_DATE AND "
+        return ("(g.game_date::date > CURRENT_DATE OR "
+                "(g.game_date::date = CURRENT_DATE AND "
                 "g.start_time >= to_char(CURRENT_TIMESTAMP, 'HH24:00')))")
     return ("(g.game_date > date('now', 'localtime') OR "
             "(g.game_date = date('now', 'localtime') AND "
