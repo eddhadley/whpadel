@@ -11,6 +11,8 @@ import os
 import secrets
 import urllib.parse
 import re
+import threading
+import time
 from datetime import datetime, date
 
 # Import our database module
@@ -122,6 +124,8 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
             return self.api_change_password()
         if path == "/api/me/name" and method == "POST":
             return self.api_update_name()
+        if path == "/api/me/notifications" and method == "POST":
+            return self.api_update_notifications()
         if path == "/api/me/games" and method == "GET":
             return self.api_my_games()
 
@@ -185,6 +189,7 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
                 skill_level=int(data.get("skill_level", 0)),
                 first_name=data.get("first_name", ""),
                 last_name=data.get("last_name", ""),
+                notifications_enabled=bool(data.get("notifications_enabled", True)),
             )
             # Send verification email
             code = user.pop("_verification_code", None)
@@ -344,6 +349,15 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
         except (ValueError, TypeError) as e:
             send_error(self, str(e))
 
+    def api_update_notifications(self):
+        user = get_session_user(self)
+        if not user:
+            return send_error(self, "Not authenticated", 401)
+        data = read_body(self)
+        enabled = bool(data.get("notifications_enabled", False))
+        updated = db.update_notifications_enabled(user["id"], enabled)
+        send_json(self, {"user": updated})
+
     def api_my_games(self):
         user = get_session_user(self)
         if not user:
@@ -383,6 +397,12 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
                 notes=data.get("notes", ""),
             )
             send_json(self, {"game": game}, 201)
+            # Send new game notifications in background
+            threading.Thread(
+                target=notify_new_game,
+                args=(game, user),
+                daemon=True
+            ).start()
         except (ValueError, TypeError) as e:
             send_error(self, str(e))
 
@@ -400,6 +420,12 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
         try:
             game = db.join_game(game_id, user["id"])
             send_json(self, {"game": game})
+            # Notify game creator in background
+            threading.Thread(
+                target=notify_player_joined,
+                args=(game, user),
+                daemon=True
+            ).start()
         except ValueError as e:
             send_error(self, str(e))
 
@@ -499,6 +525,93 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
         print(f"[{timestamp}] {args[0]}")
 
 
+def notify_new_game(game, creator):
+    """Send email notifications to eligible users about a new game (runs in background thread)."""
+    try:
+        eligible = db.get_eligible_users_for_game(game["id"])
+        creator_name = f"{creator.get('first_name', '')} {creator.get('last_name', '')}".strip() or creator.get("username", "Someone")
+        level_min = db.SKILL_LEVELS[game["min_level"] - 1]["name"] if 1 <= game["min_level"] <= 7 else str(game["min_level"])
+        level_max = db.SKILL_LEVELS[game["max_level"] - 1]["name"] if 1 <= game["max_level"] <= 7 else str(game["max_level"])
+        level_range = f"{level_min} – {level_max}" if game["min_level"] != game["max_level"] else level_min
+
+        for u in eligible:
+            email_service.send_new_game_notification(
+                to_email=u["email"],
+                first_name=u["first_name"],
+                creator_name=creator_name,
+                game_date=game["game_date"],
+                start_time=game["start_time"],
+                court=game["court"],
+                level_range=level_range,
+            )
+        if eligible:
+            print(f"[NOTIFY] New game #{game['id']}: notified {len(eligible)} eligible user(s)")
+    except Exception as e:
+        print(f"[NOTIFY ERROR] New game notification failed: {e}")
+
+
+def notify_player_joined(game, joiner):
+    """Notify the game creator that a player joined (runs in background thread)."""
+    try:
+        creator_info = db.get_game_creator_info(game["id"])
+        if not creator_info or not creator_info.get("notifications_enabled"):
+            return
+        joiner_name = f"{joiner.get('first_name', '')} {joiner.get('last_name', '')}".strip() or joiner.get("username", "Someone")
+        email_service.send_player_joined_notification(
+            to_email=creator_info["email"],
+            first_name=creator_info["first_name"],
+            joiner_name=joiner_name,
+            game_date=game["game_date"],
+            start_time=game["start_time"],
+            court=game["court"],
+            player_count=len(game.get("players", [])),
+            max_players=game["max_players"],
+        )
+        print(f"[NOTIFY] Player joined game #{game['id']}: notified creator")
+    except Exception as e:
+        print(f"[NOTIFY ERROR] Player joined notification failed: {e}")
+
+
+def send_24hr_reminders():
+    """Send reminder emails for games happening tomorrow."""
+    try:
+        games = db.get_tomorrow_games_with_players()
+        total_sent = 0
+        for game in games:
+            for player in game.get("notifiable_players", []):
+                email_service.send_game_reminder(
+                    to_email=player["email"],
+                    first_name=player["first_name"],
+                    game_date=game["game_date"],
+                    start_time=game["start_time"],
+                    court=game["court"],
+                    player_count=game["player_count"],
+                    max_players=game["max_players"],
+                )
+                total_sent += 1
+        if total_sent:
+            print(f"[REMIND] Sent {total_sent} reminder(s) for {len(games)} game(s) tomorrow")
+    except Exception as e:
+        print(f"[REMIND ERROR] Reminder job failed: {e}")
+
+
+def reminder_scheduler():
+    """Background thread that runs once per hour and sends 24hr reminders at ~8am."""
+    last_reminder_date = None
+    while True:
+        try:
+            now = datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
+            # Send reminders once per day, at or after 8am
+            if now.hour >= 8 and last_reminder_date != today_str:
+                last_reminder_date = today_str
+                print(f"[REMIND] Running 24hr reminder check...")
+                send_24hr_reminders()
+        except Exception as e:
+            print(f"[REMIND ERROR] Scheduler error: {e}")
+        time.sleep(3600)  # Check every hour
+
+
 def main():
     """Start the web server."""
     print(f"""
@@ -514,6 +627,9 @@ def main():
     """)
 
     server = ThreadingHTTPServer((HOST, PORT), PadelHandler)
+    # Start background reminder scheduler
+    reminder_thread = threading.Thread(target=reminder_scheduler, daemon=True)
+    reminder_thread.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

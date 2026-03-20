@@ -251,6 +251,15 @@ async function updateName(firstName, lastName) {
     return data.user;
 }
 
+async function updateNotifications(enabled) {
+    const data = await api('/me/notifications', {
+        method: 'POST',
+        body: { notifications_enabled: enabled }
+    });
+    state.user = data.user;
+    return data.user;
+}
+
 function validatePassword(password) {
     if (password.length < 8) return 'Password must be at least 8 characters';
     if (!/[a-zA-Z]/.test(password)) return 'Password must contain at least one letter';
@@ -442,6 +451,15 @@ function renderRegisterForm() {
                     `).join('')}
                 </div>
                 <input type="hidden" name="skill_level" id="skill-level-input" value="" required>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
+                    <input type="checkbox" name="notifications_enabled" checked style="width:18px;height:18px;accent-color:var(--primary)">
+                    Email me about new games and reminders
+                </label>
+                <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;margin-left:26px">
+                    You can change this anytime in your profile
+                </div>
             </div>
             <div id="register-error" class="form-error mb-8" style="display:none"></div>
             <button type="submit" class="btn btn-primary btn-block mt-8">Create Account</button>
@@ -994,6 +1012,19 @@ function renderProfilePage() {
             </div>
 
             <div class="card mt-16">
+                <h3 style="font-size:1rem;font-weight:700;margin-bottom:12px;">Email Notifications</h3>
+                <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:12px;">
+                    Receive emails when new games are posted, players join your games, and reminders before your games.
+                </p>
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:12px;border-radius:8px;background:var(--bg-secondary)">
+                    <input type="checkbox" id="notifications-toggle" ${state.user.notifications_enabled ? 'checked' : ''}
+                           style="width:20px;height:20px;accent-color:var(--primary);cursor:pointer">
+                    <span style="font-weight:500">Email notifications ${state.user.notifications_enabled ? 'enabled' : 'disabled'}</span>
+                </label>
+                <div id="notifications-status" style="text-align:center;margin-top:8px;font-size:0.8rem;display:none"></div>
+            </div>
+
+            <div class="card mt-16">
                 <h3 style="font-size:1rem;font-weight:700;margin-bottom:12px;">Change Colour Grading</h3>
                 <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:12px;">
                     Select your current West Hants colour grading:
@@ -1192,6 +1223,7 @@ function bindAuthEvents() {
                     skill_level: skillLevel,
                     first_name: form.get('first_name'),
                     last_name: form.get('last_name'),
+                    notifications_enabled: form.get('notifications_enabled') === 'on',
                 });
                 showToast('Check your email for a verification code! 📧', 'success');
                 render();
@@ -1969,6 +2001,29 @@ function bindProfileEvents() {
                 showToast(err.message, 'error');
                 changePwBtn.disabled = false;
                 changePwBtn.textContent = 'Change Password';
+            }
+        });
+    }
+
+    // ── Notifications toggle ──
+    const notifToggle = $('#notifications-toggle');
+    if (notifToggle) {
+        notifToggle.addEventListener('change', async () => {
+            const enabled = notifToggle.checked;
+            const statusEl = $('#notifications-status');
+            try {
+                await updateNotifications(enabled);
+                const label = notifToggle.parentElement.querySelector('span');
+                if (label) label.textContent = `Email notifications ${enabled ? 'enabled' : 'disabled'}`;
+                if (statusEl) {
+                    statusEl.textContent = enabled ? 'Notifications enabled ✅' : 'Notifications disabled';
+                    statusEl.style.display = 'block';
+                    statusEl.style.color = enabled ? 'var(--success)' : 'var(--text-secondary)';
+                    setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
+                }
+            } catch (err) {
+                notifToggle.checked = !enabled;
+                showToast(err.message, 'error');
             }
         });
     }
