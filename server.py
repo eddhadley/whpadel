@@ -423,13 +423,21 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/"):
-            self.route_api()
+            try:
+                self.route_api()
+            except Exception as e:
+                print(f"[SERVER ERROR] {self.path}: {e}")
+                send_error(self, "Internal server error", 500)
         else:
             self.serve_static()
 
     def do_POST(self):
         if self.path.startswith("/api/"):
-            self.route_api()
+            try:
+                self.route_api()
+            except Exception as e:
+                print(f"[SERVER ERROR] {self.path}: {e}")
+                send_error(self, "Internal server error", 500)
         else:
             send_error(self, "Not found", 404)
 
