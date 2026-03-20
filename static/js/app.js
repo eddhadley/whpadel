@@ -748,6 +748,10 @@ function renderCreatePage() {
                 <h2>Create Game</h2>
             </div>
 
+            <div style="background:#FFF3CD;border:1px solid #FFECB5;border-left:4px solid #FFC107;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:0.82rem;color:#664D03;line-height:1.5">
+                <strong>⚠️ Important:</strong> This is not a replacement for the court booking system and has no interaction with the West Hants court booking system. You <strong>MUST</strong> book the court first in Elite-Live before creating a game in this app.
+            </div>
+
             <form id="create-game-form">
                 <div class="form-group">
                     <label>Court</label>
