@@ -44,12 +44,13 @@ WEB_APP_URL=$(echo "$DEPLOY_OUTPUT" | jq -r '.webAppUrl.value')
 echo "  ACR:      $ACR_LOGIN_SERVER"
 echo "  Web App:  $WEB_APP_NAME"
 
-# ─── Step 3: Build & Push Docker Image ─────────────────────────
-echo "▸ Building and pushing Docker image..."
-az acr login --name "$ACR_NAME"
-
-docker build -t "${ACR_LOGIN_SERVER}/${APP_NAME}:latest" .
-docker push "${ACR_LOGIN_SERVER}/${APP_NAME}:latest"
+# ─── Step 3: Build & Push Docker Image (using ACR Tasks – no local Docker needed)
+echo "▸ Building and pushing Docker image via ACR Tasks..."
+az acr build \
+  --registry "$ACR_NAME" \
+  --image "${APP_NAME}:latest" \
+  --file Dockerfile \
+  .
 
 # ─── Step 4: Restart Web App ───────────────────────────────────
 echo "▸ Restarting web app..."
