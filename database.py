@@ -141,6 +141,11 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_games_court ON games(court, game_date, start_time);
             CREATE INDEX IF NOT EXISTS idx_game_players ON game_players(game_id, user_id);
         """)
+        # Migrations for existing databases
+        cursor = db_cursor(conn)
+        cursor.execute("""
+            ALTER TABLE games ADD COLUMN IF NOT EXISTS reserved_slots INTEGER NOT NULL DEFAULT 0;
+        """)
     else:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
