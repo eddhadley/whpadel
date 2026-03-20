@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+padel.db
+.env
+.venv/
+*.egg-info/
+dist/
+build/

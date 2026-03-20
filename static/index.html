@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a5632">
+    <meta name="description" content="Find padel partners at The West Hants Club">
+    <title>West Hants Padel</title>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Loading spinner -->
+        <div id="loading-screen" class="loading-screen">
+            <div class="loader"></div>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <script>
+    window.onerror = function(msg, url, line, col, error) {
+        document.getElementById('app').innerHTML =
+            '<div style="padding:20px;color:red;font-family:monospace">' +
+            '<h2>JS Error</h2><p>' + msg + '</p><p>Line: ' + line + ', Col: ' + col + '</p>' +
+            '<pre>' + (error && error.stack ? error.stack : '') + '</pre></div>';
+    };
+    </script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
