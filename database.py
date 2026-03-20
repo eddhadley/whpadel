@@ -112,7 +112,9 @@ def init_db():
                 verification_expires TEXT,
                 reset_code TEXT,
                 reset_code_expires TEXT,
-                notifications_enabled INTEGER NOT NULL DEFAULT 1,
+                notify_new_games INTEGER NOT NULL DEFAULT 1,
+                notify_player_joined INTEGER NOT NULL DEFAULT 1,
+                notify_reminders INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -146,7 +148,9 @@ def init_db():
         cursor = db_cursor(conn)
         cursor.execute("""
             ALTER TABLE games ADD COLUMN IF NOT EXISTS reserved_slots INTEGER NOT NULL DEFAULT 0;
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS notifications_enabled INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_new_games INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_player_joined INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_reminders INTEGER NOT NULL DEFAULT 1;
         """)
     else:
         conn.executescript("""
@@ -164,7 +168,9 @@ def init_db():
                 verification_expires TEXT,
                 reset_code TEXT,
                 reset_code_expires TEXT,
-                notifications_enabled INTEGER NOT NULL DEFAULT 1,
+                notify_new_games INTEGER NOT NULL DEFAULT 1,
+                notify_player_joined INTEGER NOT NULL DEFAULT 1,
+                notify_reminders INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -294,7 +300,7 @@ def resend_verification(user_id):
         conn.close()
 
 
-def register_user(username, email, password, skill_level, first_name, last_name, notifications_enabled=True):
+def register_user(username, email, password, skill_level, first_name, last_name, notify_new_games=True, notify_player_joined=True, notify_reminders=True):
     """Register a new user with email verification. Returns user dict or raises ValueError."""
     if not username or not email or not password:
         raise ValueError("Username, email and password are required")
@@ -310,25 +316,27 @@ def register_user(username, email, password, skill_level, first_name, last_name,
     conn = get_db()
     try:
         cursor = db_cursor(conn)
-        notif_val = 1 if notifications_enabled else 0
+        ng = 1 if notify_new_games else 0
+        npj = 1 if notify_player_joined else 0
+        nr = 1 if notify_reminders else 0
         if USE_POSTGRES:
             cursor.execute(
                 """INSERT INTO users (username, email, password_hash, password_salt, 
-                   skill_level, first_name, last_name, email_verified, notifications_enabled, verification_code, verification_expires)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s) RETURNING id""",
+                   skill_level, first_name, last_name, email_verified, notify_new_games, notify_player_joined, notify_reminders, verification_code, verification_expires)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s) RETURNING id""",
                 (username.strip(), email.strip().lower(), password_hash, salt,
                  skill_level, first_name.strip(), last_name.strip(),
-                 notif_val, verification_code, expires)
+                 ng, npj, nr, verification_code, expires)
             )
             user_id = cursor.fetchone()["id"]
         else:
             cursor.execute(
                 """INSERT INTO users (username, email, password_hash, password_salt, 
-                   skill_level, first_name, last_name, email_verified, notifications_enabled, verification_code, verification_expires)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+                   skill_level, first_name, last_name, email_verified, notify_new_games, notify_player_joined, notify_reminders, verification_code, verification_expires)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
                 (username.strip(), email.strip().lower(), password_hash, salt,
                  skill_level, first_name.strip(), last_name.strip(),
-                 notif_val, verification_code, expires)
+                 ng, npj, nr, verification_code, expires)
             )
             user_id = cursor.lastrowid
         conn.commit()
@@ -441,7 +449,7 @@ def get_user_by_id(user_id, conn=None):
         conn = get_db()
     cursor = db_cursor(conn)
     cursor.execute(
-        _q("SELECT id, username, email, skill_level, first_name, last_name, email_verified, notifications_enabled, created_at FROM users WHERE id = %s"),
+        _q("SELECT id, username, email, skill_level, first_name, last_name, email_verified, notify_new_games, notify_player_joined, notify_reminders, created_at FROM users WHERE id = %s"),
         (user_id,)
     )
     user = cursor.fetchone()
@@ -934,14 +942,28 @@ def get_court_availability(date):
 
 # ─── Notification helpers ───────────────────────────────────────
 
-def update_notifications_enabled(user_id, enabled):
-    """Toggle email notifications for a user. Returns updated user dict."""
+def update_notification_preferences(user_id, notify_new_games=None, notify_player_joined=None, notify_reminders=None):
+    """Update individual notification preferences. Only updates fields that are not None."""
+    updates = []
+    params = []
+    if notify_new_games is not None:
+        updates.append("notify_new_games = %s")
+        params.append(1 if notify_new_games else 0)
+    if notify_player_joined is not None:
+        updates.append("notify_player_joined = %s")
+        params.append(1 if notify_player_joined else 0)
+    if notify_reminders is not None:
+        updates.append("notify_reminders = %s")
+        params.append(1 if notify_reminders else 0)
+    if not updates:
+        return get_user_by_id(user_id)
+    params.append(user_id)
     conn = get_db()
     try:
         cursor = db_cursor(conn)
         cursor.execute(
-            _q("UPDATE users SET notifications_enabled = %s WHERE id = %s"),
-            (1 if enabled else 0, user_id)
+            _q(f"UPDATE users SET {', '.join(updates)} WHERE id = %s"),
+            params
         )
         conn.commit()
         return get_user_by_id(user_id, conn)
@@ -958,7 +980,7 @@ def get_eligible_users_for_game(game_id, exclude_user_id=None):
         cursor.execute(
             _q("""SELECT u.id, u.email, u.first_name, u.skill_level
                    FROM users u
-                   WHERE u.notifications_enabled = 1
+                   WHERE u.notify_new_games = 1
                      AND u.email_verified = 1
                      AND u.skill_level >= (SELECT min_level FROM games WHERE id = %s)
                      AND u.skill_level <= (SELECT max_level FROM games WHERE id = %s)
@@ -981,7 +1003,7 @@ def get_game_creator_info(game_id):
     try:
         cursor = db_cursor(conn)
         cursor.execute(
-            _q("""SELECT u.id, u.email, u.first_name, u.notifications_enabled
+            _q("""SELECT u.id, u.email, u.first_name, u.notify_player_joined
                    FROM users u
                    JOIN games g ON g.creator_id = u.id
                    WHERE g.id = %s"""),
@@ -1013,11 +1035,11 @@ def get_tomorrow_games_with_players():
         # For each game, get players with notifications enabled
         for game in games:
             cursor.execute(
-                _q("""SELECT u.id, u.email, u.first_name, u.notifications_enabled
+                _q("""SELECT u.id, u.email, u.first_name, u.notify_reminders
                        FROM users u
                        JOIN game_players gp ON gp.user_id = u.id
                        WHERE gp.game_id = %s
-                         AND u.notifications_enabled = 1
+                         AND u.notify_reminders = 1
                          AND u.email_verified = 1"""),
                 (game["id"],)
             )

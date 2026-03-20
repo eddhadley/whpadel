@@ -251,10 +251,10 @@ async function updateName(firstName, lastName) {
     return data.user;
 }
 
-async function updateNotifications(enabled) {
+async function updateNotifications(prefs) {
     const data = await api('/me/notifications', {
         method: 'POST',
-        body: { notifications_enabled: enabled }
+        body: prefs
     });
     state.user = data.user;
     return data.user;
@@ -453,13 +453,22 @@ function renderRegisterForm() {
                 <input type="hidden" name="skill_level" id="skill-level-input" value="" required>
             </div>
             <div class="form-group">
-                <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
-                    <input type="checkbox" name="notifications_enabled" checked style="width:18px;height:18px;accent-color:var(--primary)">
-                    Email me about new games and reminders
-                </label>
-                <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;margin-left:26px">
-                    You can change this anytime in your profile
+                <label style="font-weight:600;margin-bottom:8px;display:block">Email Notifications</label>
+                <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:8px">
+                    You can change these anytime in your profile
                 </div>
+                <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500;margin-bottom:6px">
+                    <input type="checkbox" name="notify_new_games" checked style="width:18px;height:18px;accent-color:var(--primary)">
+                    New games matching my level
+                </label>
+                <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500;margin-bottom:6px">
+                    <input type="checkbox" name="notify_player_joined" checked style="width:18px;height:18px;accent-color:var(--primary)">
+                    Players join my games
+                </label>
+                <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
+                    <input type="checkbox" name="notify_reminders" checked style="width:18px;height:18px;accent-color:var(--primary)">
+                    Reminders before my games
+                </label>
             </div>
             <div id="register-error" class="form-error mb-8" style="display:none"></div>
             <button type="submit" class="btn btn-primary btn-block mt-8">Create Account</button>
@@ -800,6 +809,10 @@ function renderGameModal(game) {
                     </ul>
 
                     ${actionButton}
+                    <button class="btn btn-secondary btn-block mt-8" id="modal-share-btn" data-game-id="${game.id}" style="display:flex;align-items:center;justify-content:center;gap:6px">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        Copy Link
+                    </button>
                     <button class="btn btn-secondary btn-block mt-8" id="modal-close-btn">Close</button>
                 </div>
             </div>
@@ -1014,13 +1027,34 @@ function renderProfilePage() {
             <div class="card mt-16">
                 <h3 style="font-size:1rem;font-weight:700;margin-bottom:12px;">Email Notifications</h3>
                 <p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:12px;">
-                    Receive emails when new games are posted, players join your games, and reminders before your games.
+                    Choose which email notifications you'd like to receive.
                 </p>
-                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:12px;border-radius:8px;background:var(--bg-secondary)">
-                    <input type="checkbox" id="notifications-toggle" ${state.user.notifications_enabled ? 'checked' : ''}
-                           style="width:20px;height:20px;accent-color:var(--primary);cursor:pointer">
-                    <span style="font-weight:500">Email notifications ${state.user.notifications_enabled ? 'enabled' : 'disabled'}</span>
-                </label>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:12px;border-radius:8px;background:var(--bg-secondary)">
+                        <input type="checkbox" class="notif-pref" data-pref="notify_new_games" ${state.user.notify_new_games ? 'checked' : ''}
+                               style="width:20px;height:20px;accent-color:var(--primary);cursor:pointer">
+                        <div>
+                            <div style="font-weight:500">New games</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary)">When games matching your level are posted</div>
+                        </div>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:12px;border-radius:8px;background:var(--bg-secondary)">
+                        <input type="checkbox" class="notif-pref" data-pref="notify_player_joined" ${state.user.notify_player_joined ? 'checked' : ''}
+                               style="width:20px;height:20px;accent-color:var(--primary);cursor:pointer">
+                        <div>
+                            <div style="font-weight:500">Player joined</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary)">When someone joins your game</div>
+                        </div>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:12px;border-radius:8px;background:var(--bg-secondary)">
+                        <input type="checkbox" class="notif-pref" data-pref="notify_reminders" ${state.user.notify_reminders ? 'checked' : ''}
+                               style="width:20px;height:20px;accent-color:var(--primary);cursor:pointer">
+                        <div>
+                            <div style="font-weight:500">Game reminders</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary)">24-hour reminder before your games</div>
+                        </div>
+                    </label>
+                </div>
                 <div id="notifications-status" style="text-align:center;margin-top:8px;font-size:0.8rem;display:none"></div>
             </div>
 
@@ -1223,7 +1257,9 @@ function bindAuthEvents() {
                     skill_level: skillLevel,
                     first_name: form.get('first_name'),
                     last_name: form.get('last_name'),
-                    notifications_enabled: form.get('notifications_enabled') === 'on',
+                    notify_new_games: form.get('notify_new_games') === 'on',
+                    notify_player_joined: form.get('notify_player_joined') === 'on',
+                    notify_reminders: form.get('notify_reminders') === 'on',
                 });
                 showToast('Check your email for a verification code! 📧', 'success');
                 render();
@@ -1537,6 +1573,10 @@ function closeModal() {
     if (modal) modal.remove();
     const warning = $('#level-change-modal');
     if (warning) warning.remove();
+    // Clear deep link hash so it doesn't reopen on navigation
+    if (window.location.hash.startsWith('#game/')) {
+        history.replaceState(null, '', window.location.pathname);
+    }
 }
 
 function showLevelChangeWarning(newLevel, affectedGames) {
@@ -1609,6 +1649,36 @@ function bindModalEvents(game) {
     // Close button
     const closeBtn = $('#modal-close-btn');
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
+
+    // Share / copy link button
+    const shareBtn = $('#modal-share-btn');
+    if (shareBtn) {
+        shareBtn.addEventListener('click', async () => {
+            const gameId = shareBtn.dataset.gameId;
+            const url = `${window.location.origin}${window.location.pathname}#game/${gameId}`;
+            try {
+                await navigator.clipboard.writeText(url);
+                shareBtn.innerHTML = '✓ Link Copied!';
+                setTimeout(() => {
+                    shareBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Copy Link';
+                }, 2000);
+            } catch {
+                // Fallback for older browsers
+                const ta = document.createElement('textarea');
+                ta.value = url;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                shareBtn.innerHTML = '✓ Link Copied!';
+                setTimeout(() => {
+                    shareBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Copy Link';
+                }, 2000);
+            }
+        });
+    }
 
     // Join
     const joinBtn = $('#modal-join-game');
@@ -2005,28 +2075,26 @@ function bindProfileEvents() {
         });
     }
 
-    // ── Notifications toggle ──
-    const notifToggle = $('#notifications-toggle');
-    if (notifToggle) {
-        notifToggle.addEventListener('change', async () => {
-            const enabled = notifToggle.checked;
+    // ── Notifications toggles ──
+    document.querySelectorAll('.notif-pref').forEach(toggle => {
+        toggle.addEventListener('change', async () => {
+            const pref = toggle.dataset.pref;
+            const enabled = toggle.checked;
             const statusEl = $('#notifications-status');
             try {
-                await updateNotifications(enabled);
-                const label = notifToggle.parentElement.querySelector('span');
-                if (label) label.textContent = `Email notifications ${enabled ? 'enabled' : 'disabled'}`;
+                await updateNotifications({ [pref]: enabled });
                 if (statusEl) {
-                    statusEl.textContent = enabled ? 'Notifications enabled ✅' : 'Notifications disabled';
+                    statusEl.textContent = 'Preference saved ✓';
                     statusEl.style.display = 'block';
-                    statusEl.style.color = enabled ? 'var(--success)' : 'var(--text-secondary)';
+                    statusEl.style.color = 'var(--success)';
                     setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
                 }
             } catch (err) {
-                notifToggle.checked = !enabled;
+                toggle.checked = !enabled;
                 showToast(err.message, 'error');
             }
         });
-    }
+    });
 
     // ── Skill level selector ──
     $$('#profile-skill-selector .skill-option').forEach(option => {
@@ -2099,7 +2167,21 @@ function bindProfileEvents() {
 async function init() {
     await checkAuth();
     render();
+    handleDeepLink();
 }
+
+function handleDeepLink() {
+    const hash = window.location.hash;
+    const match = hash.match(/^#game\/(\d+)$/);
+    if (match && state.user && state.user.email_verified) {
+        const gameId = parseInt(match[1]);
+        openGameModal(gameId);
+    }
+}
+
+window.addEventListener('hashchange', () => {
+    handleDeepLink();
+});
 
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {

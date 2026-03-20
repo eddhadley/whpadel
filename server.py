@@ -189,7 +189,9 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
                 skill_level=int(data.get("skill_level", 0)),
                 first_name=data.get("first_name", ""),
                 last_name=data.get("last_name", ""),
-                notifications_enabled=bool(data.get("notifications_enabled", True)),
+                notify_new_games=bool(data.get("notify_new_games", True)),
+                notify_player_joined=bool(data.get("notify_player_joined", True)),
+                notify_reminders=bool(data.get("notify_reminders", True)),
             )
             # Send verification email
             code = user.pop("_verification_code", None)
@@ -354,8 +356,12 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
         if not user:
             return send_error(self, "Not authenticated", 401)
         data = read_body(self)
-        enabled = bool(data.get("notifications_enabled", False))
-        updated = db.update_notifications_enabled(user["id"], enabled)
+        updated = db.update_notification_preferences(
+            user["id"],
+            notify_new_games=data.get("notify_new_games"),
+            notify_player_joined=data.get("notify_player_joined"),
+            notify_reminders=data.get("notify_reminders"),
+        )
         send_json(self, {"user": updated})
 
     def api_my_games(self):
@@ -554,7 +560,7 @@ def notify_player_joined(game, joiner):
     """Notify the game creator that a player joined (runs in background thread)."""
     try:
         creator_info = db.get_game_creator_info(game["id"])
-        if not creator_info or not creator_info.get("notifications_enabled"):
+        if not creator_info or not creator_info.get("notify_player_joined"):
             return
         joiner_name = f"{joiner.get('first_name', '')} {joiner.get('last_name', '')}".strip() or joiner.get("username", "Someone")
         email_service.send_player_joined_notification(
