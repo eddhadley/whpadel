@@ -748,6 +748,56 @@ def leave_game(game_id, user_id):
         conn.close()
 
 
+def remove_player_from_game(game_id, player_id, host_id):
+    """Host removes a player from their game."""
+    conn = get_db()
+    try:
+        game = get_game_by_id(game_id, conn)
+        if not game:
+            raise ValueError("Game not found")
+        if game["creator_id"] != host_id:
+            raise ValueError("Only the host can remove players")
+        if player_id == host_id:
+            raise ValueError("Host cannot remove themselves")
+        if not any(p["id"] == player_id for p in game["players"]):
+            raise ValueError("Player is not in this game")
+
+        cursor = db_cursor(conn)
+        cursor.execute(
+            _q("DELETE FROM game_players WHERE game_id = %s AND user_id = %s"),
+            (game_id, player_id)
+        )
+        conn.commit()
+        return get_game_by_id(game_id, conn)
+    finally:
+        conn.close()
+
+
+def update_reserved_slots(game_id, new_reserved_slots, host_id):
+    """Host adjusts reserved slots for their game."""
+    conn = get_db()
+    try:
+        game = get_game_by_id(game_id, conn)
+        if not game:
+            raise ValueError("Game not found")
+        if game["creator_id"] != host_id:
+            raise ValueError("Only the host can modify reserved slots")
+        if not isinstance(new_reserved_slots, int) or not (0 <= new_reserved_slots <= 3):
+            raise ValueError("Reserved slots must be between 0 and 3")
+        if len(game["players"]) + new_reserved_slots > game["max_players"]:
+            raise ValueError(f"Too many slots: {len(game['players'])} players + {new_reserved_slots} reserved exceeds {game['max_players']} max")
+
+        cursor = db_cursor(conn)
+        cursor.execute(
+            _q("UPDATE games SET reserved_slots = %s WHERE id = %s"),
+            (new_reserved_slots, game_id)
+        )
+        conn.commit()
+        return get_game_by_id(game_id, conn)
+    finally:
+        conn.close()
+
+
 def get_incompatible_games(user_id, new_level, conn=None):
     """Find future games the user is in where new_level is outside min/max range."""
     own_conn = conn is None

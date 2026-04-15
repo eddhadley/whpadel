@@ -311,6 +311,16 @@ async function leaveGame(id) {
     return data;
 }
 
+async function removePlayerFromGame(gameId, playerId) {
+    const data = await api(`/games/${gameId}/remove-player/${playerId}`, { method: 'POST' });
+    return data.game;
+}
+
+async function updateReservedSlots(gameId, reservedSlots) {
+    const data = await api(`/games/${gameId}/reserved-slots`, { method: 'POST', body: { reserved_slots: reservedSlots } });
+    return data.game;
+}
+
 async function fetchCourtAvailability(date) {
     const data = await api(`/courts/availability?date=${date}`);
     return data;
@@ -775,6 +785,7 @@ function renderGameModal(game) {
                     <ul class="player-list">
                         ${game.players.map(p => {
                             const pl = getSkillLevel(p.skill_level);
+                            const canRemove = isCreator && p.id !== state.user.id;
                             return `
                                 <li class="player-list-item">
                                     <div class="player-list-avatar" style="background:${pl.color}">${getInitials(p)}</div>
@@ -785,16 +796,18 @@ function renderGameModal(game) {
                                         </div>
                                         <div class="level">@${escapeHtml(p.username)} · <span style="color:${pl.color};font-weight:600">${pl.name}</span> (${pl.label})</div>
                                     </div>
+                                    ${canRemove ? `<button class="btn-remove-player" data-player-id="${p.id}" title="Remove player" style="margin-left:auto;padding:4px 10px;background:#e74c3c;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0">✕</button>` : ''}
                                 </li>
                             `;
                         }).join('')}
                         ${Array.from({length: reserved}, (_, i) => `
-                            <li class="player-list-item">
+                            <li class="player-list-item reserved-slot-item">
                                 <div class="player-list-avatar reserved-slot" style="background:#9b59b6;color:white">R</div>
                                 <div class="player-list-info">
                                     <div class="name">${escapeHtml(game.creator_name || 'Host')}'s guest <span class="reserved-tag">RESERVED</span></div>
                                     <div class="level">Pre-arranged player</div>
                                 </div>
+                                ${isCreator ? `<button class="btn-remove-reserved" title="Remove reserved slot" style="margin-left:auto;padding:4px 10px;background:#9b59b6;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0">✕</button>` : ''}
                             </li>
                         `).join('')}
                         ${Array.from({length: game.max_players - game.players.length - reserved}, (_, i) => `
@@ -1752,6 +1765,54 @@ function bindModalEvents(game) {
             }
         });
     }
+
+    // Remove player (host only)
+    $$('.btn-remove-player').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const playerId = btn.dataset.playerId;
+            if (!confirm('Remove this player from the game?')) return;
+            btn.disabled = true;
+            try {
+                await removePlayerFromGame(game.id, playerId);
+                showToast('Player removed', 'success');
+                closeModal();
+                if (state.currentPage === 'games') {
+                    await fetchGames();
+                    const content = $('#page-content');
+                    content.innerHTML = renderGamesPage();
+                    bindGamesEvents();
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+                btn.disabled = false;
+            }
+        });
+    });
+
+    // Remove reserved slot (host only)
+    $$('.btn-remove-reserved').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (!confirm('Remove a reserved slot?')) return;
+            btn.disabled = true;
+            try {
+                const newReserved = (game.reserved_slots || 1) - 1;
+                await updateReservedSlots(game.id, Math.max(0, newReserved));
+                showToast('Reserved slot removed', 'success');
+                closeModal();
+                if (state.currentPage === 'games') {
+                    await fetchGames();
+                    const content = $('#page-content');
+                    content.innerHTML = renderGamesPage();
+                    bindGamesEvents();
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+                btn.disabled = false;
+            }
+        });
+    });
 }
 
 function bindCreateEvents() {

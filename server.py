@@ -150,6 +150,16 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
             else:
                 return self.api_leave_game(game_id)
 
+        # Remove player: /api/games/<id>/remove-player/<player_id>
+        match = re.match(r"^/api/games/(\d+)/remove-player/(\d+)$", path)
+        if match and method == "POST":
+            return self.api_remove_player(int(match.group(1)), int(match.group(2)))
+
+        # Update reserved slots: /api/games/<id>/reserved-slots
+        match = re.match(r"^/api/games/(\d+)/reserved-slots$", path)
+        if match and method == "POST":
+            return self.api_update_reserved_slots(int(match.group(1)))
+
         # Court availability
         if path == "/api/courts/availability" and method == "GET":
             return self.api_court_availability()
@@ -443,6 +453,28 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
             result = db.leave_game(game_id, user["id"])
             send_json(self, result)
         except ValueError as e:
+            send_error(self, str(e))
+
+    def api_remove_player(self, game_id, player_id):
+        user = get_session_user(self)
+        if not user:
+            return send_error(self, "Not authenticated", 401)
+        try:
+            game = db.remove_player_from_game(game_id, player_id, user["id"])
+            send_json(self, {"game": game})
+        except ValueError as e:
+            send_error(self, str(e))
+
+    def api_update_reserved_slots(self, game_id):
+        user = get_session_user(self)
+        if not user:
+            return send_error(self, "Not authenticated", 401)
+        data = read_body(self)
+        try:
+            new_slots = int(data.get("reserved_slots", 0))
+            game = db.update_reserved_slots(game_id, new_slots, user["id"])
+            send_json(self, {"game": game})
+        except (ValueError, TypeError) as e:
             send_error(self, str(e))
 
     def api_court_availability(self):
