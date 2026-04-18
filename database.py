@@ -357,11 +357,12 @@ def register_user(username, email, password, skill_level, first_name, last_name,
 
 
 def authenticate_user(username, password):
-    """Authenticate user by username and password. Returns user dict or None."""
+    """Authenticate user by username or email and password. Returns user dict or None."""
     conn = get_db()
     cursor = db_cursor(conn)
+    identifier = username.strip()
     cursor.execute(
-        _q("SELECT * FROM users WHERE username = %s"), (username.strip(),)
+        _q("SELECT * FROM users WHERE username = %s OR email = %s"), (identifier, identifier.lower())
     )
     user = cursor.fetchone()
     conn.close()

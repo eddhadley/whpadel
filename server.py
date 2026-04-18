@@ -237,7 +237,7 @@ class PadelHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"user": safe_user, "token": token}, default=str).encode("utf-8"))
         else:
-            send_error(self, "Invalid username or password", 401)
+            send_error(self, "Invalid username/email or password", 401)
 
     def api_logout(self):
         cookie_header = self.headers.get("Cookie", "")

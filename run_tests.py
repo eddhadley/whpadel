@@ -360,6 +360,35 @@ def run_e2e_tests():
             do_logout()
             results.record("Logout returns to login page", page.is_visible(".auth-page"))
 
+            # 1d2. Login with email address instead of username
+            page.fill('input[name="username"]', "player1@test.com")
+            page.fill('input[name="password"]', "Test123!x")
+            page.click('button[type="submit"]')
+            page.wait_for_selector(".bottom-nav", timeout=10000)
+            results.record("Login with email address", page.is_visible(".bottom-nav"))
+
+            # 1d3. Verify it's the correct user (Alice)
+            top_bar_text = page.text_content(".top-bar")
+            results.record("Email login shows correct user", "Alice" in top_bar_text, top_bar_text[:60])
+
+            # 1d4. Logout after email login
+            do_logout()
+            results.record("Logout after email login", page.is_visible(".auth-page"))
+
+            # 1d5. Login with email - wrong password
+            page.fill('input[name="username"]', "player1@test.com")
+            page.fill('input[name="password"]', "WrongPassword1!")
+            page.click('button[type="submit"]')
+            page.wait_for_selector("#login-error", state="visible", timeout=5000)
+            results.record("Email login wrong password shows error", page.is_visible("#login-error"))
+
+            # 1d6. Login with non-existent email
+            page.fill('input[name="username"]', "nobody@test.com")
+            page.fill('input[name="password"]', "Test123!x")
+            page.click('button[type="submit"]')
+            page.wait_for_selector("#login-error", state="visible", timeout=5000)
+            results.record("Non-existent email shows error", page.is_visible("#login-error"))
+
             # 1e. Login with wrong password
             page.fill('input[name="username"]', "testplayer1")
             page.fill('input[name="password"]', "WrongPassword1!")

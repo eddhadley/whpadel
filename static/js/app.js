@@ -403,8 +403,8 @@ function renderLoginForm() {
     return `
         <form id="login-form">
             <div class="form-group">
-                <label>Username</label>
-                <input type="text" class="form-input" name="username" placeholder="Enter your username" required autocomplete="username">
+                <label>Username or Email</label>
+                <input type="text" class="form-input" name="username" placeholder="Enter your username or email" required autocomplete="username">
             </div>
             <div class="form-group">
                 <label>Password</label>
